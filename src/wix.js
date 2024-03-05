@@ -8,8 +8,6 @@
 
     var userData, userId;
 
-    console.log('PitchPrint Wix Integration Loaded');
-    
     const 
         PREVIEWPATH = 'https://s3-eu-west-1.amazonaws.com/pitchprint.io/previews/',
         APP_CLIENT_ID = 'b900693a-6304-469d-b100-61db78a331aa',
