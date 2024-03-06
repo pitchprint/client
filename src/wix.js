@@ -36,7 +36,7 @@
         },
         
         start = async param => {
-            if (window.location.href.indexOf('/account/my-orders') !== -1)
+            if (window.location.href.includes('/account/my-orders'))
                 return startClientAccount(param);
 
             param = param || { };
@@ -193,7 +193,7 @@
     			client: 'wx',
     			afterValidation: '_fetchProjects'
     		});
-    		window.ppclient.on('app-validated', initSaveForLater);
+    		window.ppclient.on('app-validated', initSaveForLater());
         },
         
         storeOrders = param => {
