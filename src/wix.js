@@ -36,7 +36,7 @@
         },
 
         start = async param => {
-            if (window.location.href.includes('/account/my-orders'))
+            if (window.location.href.includes('/account/my-orders') || param.pageTypeIdentifier === "member_page")
                 return startClientAccount(param);
 
             param = param || {};
@@ -451,10 +451,6 @@
                                 window.localStorage.setItem('cartItems', JSON.stringify(cartItems))
                                 window.localStorage.setItem('addedToCart', JSON.stringify(addedToCart))
                             }
-
-
-
-
                         }
                         clearDesign(data.id);
 
