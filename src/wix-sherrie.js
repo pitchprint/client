@@ -73,7 +73,7 @@
 
             let elmParent = document.querySelector('[data-hook="product-prices-wrapper"]');
             if (!elmParent) {
-                let cartElem = document.querySelector('[data-hook="add-to-cart"], [aria-label="Add to Cart"]');
+                let cartElem = document.querySelector('[data-hook="add-to-cart"]');
                 elmParent = cartElem?.parentNode;
             }
             if (!elmParent) return console.log('Weird, PitchPrint needs the pricing element to hook div to');
@@ -270,8 +270,7 @@
             _decrement.forEach((button, index) => {
                 button.addEventListener('click', () => {
                     if (_cartItems[index].projectId && _cartItems[index].projectId.length > 1 && _quantity[index].value > 1) {
-                        _cartItems[index].projectId.splice(-1);
-                        console.log(_cartItems)
+                        _cartItems[index].splice(-1);
                         window.localStorage.setItem('addedToCart', JSON.stringify(_cartItems));
                         setTimeout(setCartImages(), 500);
                     }
@@ -373,33 +372,101 @@
 
                     case 'AddToCart':
                         if (getApiKey()) {
-                            const cartItems = parseJson(window.localStorage.getItem('cartItems')) || {},
-                                existingItemIndex = cartItems[data.id] ? cartItems[data.id].findIndex(item => item.id === data.id) : -1,
-                                addedToCart = parseJson(window.localStorage.getItem('addedToCart')) || [];
 
-                            if (addedToCart.length === 0 && window.ppclient?.vars?.projectId) {
-                                data['projectId'] = [window.ppclient.vars.projectId]; // Wrap projectId in an array
-                                addedToCart.push(data);
+                            if (getApiKey() === "wix_222fcf82-23e5-4b3f-9104-749d3dc8cf15") {
+                                const cartItems = parseJson(window.localStorage.getItem('cartItems')) || {},
+                                    existingItemIndex = cartItems[data.id] ? cartItems[data.id].findIndex(item => item.id === data.id) : -1,
+                                    addedToCart = parseJson(window.localStorage.getItem('addedToCart')) || [],
+                                    textFields = document.querySelectorAll('[data-hook="text-option-text-area"]');
+
+                                const textFieldValues = {
+                                    textField0Value: textFields.length > 0 ? textFields[0].value : null,
+                                    textField1Value: textFields.length > 1 ? textFields[1].value : null,
+                                };
+
+                                if (addedToCart.length === 0 && window.ppclient?.vars?.projectId) {
+                                    data['projectId'] = [window.ppclient.vars.projectId]; // Wrap projectId in an array
+
+                                    if (textFieldValues.textField0Value !== null) {
+                                        data['textField0'] = textFieldValues.textField0Value;
+                                    }
+                                    if (textFieldValues.textField1Value !== null) {
+                                        data['textField1'] = textFieldValues.textField1Value;
+                                    }
+
+                                    addedToCart.push(data);
+
+                                } else {
+                                    const existingItem = addedToCart.find(item => item.id === data.id && item.variantId === data.variantId);
+
+                                    if (existingItem && window.ppclient?.vars?.projectId) {
+
+                                        const textField0Matches = textFieldValues.textField0Value === existingItem.textField0;
+                                        const textField1Matches = textFieldValues.textField1Value === existingItem.textField1;
+
+                                        if (textField0Matches && textField1Matches) {
+                                            // If text fields match, update projectId array for existing item
+                                            existingItem['projectId'].push(window.ppclient.vars.projectId);
+                                        } else if (textField0Matches && textFieldValues.textField1Value === null) {
+                                            existingItem['projectId'].push(window.ppclient.vars.projectId);
+                                        } else {
+                                            // If text fields do not match, add new data entry
+                                            data['projectId'] = [window.ppclient.vars.projectId];
+                                            if (textFieldValues.textField0Value !== null) {
+                                                data['textField0'] = textFieldValues.textField0Value;
+                                            }
+                                            if (textFieldValues.textField1Value !== null) {
+                                                data['textField1'] = textFieldValues.textField1Value;
+                                            }
+                                            addedToCart.push(data);
+                                        }
+
+                                    } else if (!existingItem && window.ppclient?.vars?.projectId) {
+                                        // If no existing item matches and projectId exists, add as new data
+                                        data['projectId'] = [window.ppclient.vars.projectId];
+                                        if (textFieldValues.textField0Value !== null) {
+                                            data['textField0'] = textFieldValues.textField0Value;
+                                        }
+                                        if (textFieldValues.textField1Value !== null) {
+                                            data['textField1'] = textFieldValues.textField1Value;
+                                        }
+                                        addedToCart.push(data);
+                                    } else {
+                                        // If no conditions met, just add data
+                                        addedToCart.push(data);
+                                    }
+                                }
+                                window.localStorage.setItem('cartItems', JSON.stringify(cartItems))
+                                window.localStorage.setItem('addedToCart', JSON.stringify(addedToCart))
 
                             } else {
-                                const existingItem = addedToCart.find(item => item.id === data.id && item.variantId === data.variantId);
+                                const cartItems = parseJson(window.localStorage.getItem('cartItems')) || {},
+                                    existingItemIndex = cartItems[data.id] ? cartItems[data.id].findIndex(item => item.id === data.id) : -1,
+                                    addedToCart = parseJson(window.localStorage.getItem('addedToCart')) || [];
 
-                                if (existingItem && window.ppclient?.vars?.projectId) {
-                                    // If variant is the same, update projectId array
-                                    existingItem['projectId'].push(window.ppclient.vars.projectId);
-
-                                } else if (!existingItem && window.ppclient?.vars?.projectId) {
-                                    // If variant is different or product not found, push new data
+                                if (addedToCart.length === 0 && window.ppclient?.vars?.projectId) {
                                     data['projectId'] = [window.ppclient.vars.projectId]; // Wrap projectId in an array
                                     addedToCart.push(data);
 
                                 } else {
-                                    addedToCart.push(data);
-                                }
-                            }
-                            window.localStorage.setItem('cartItems', JSON.stringify(cartItems))
-                            window.localStorage.setItem('addedToCart', JSON.stringify(addedToCart))
+                                    const existingItem = addedToCart.find(item => item.id === data.id && item.variantId === data.variantId);
 
+                                    if (existingItem && window.ppclient?.vars?.projectId) {
+                                        // If variant is the same, update projectId array
+                                        existingItem['projectId'].push(window.ppclient.vars.projectId);
+
+                                    } else if (!existingItem && window.ppclient?.vars?.projectId) {
+                                        // If variant is different or product not found, push new data
+                                        data['projectId'] = [window.ppclient.vars.projectId]; // Wrap projectId in an array
+                                        addedToCart.push(data);
+
+                                    } else {
+                                        addedToCart.push(data);
+                                    }
+                                }
+                                window.localStorage.setItem('cartItems', JSON.stringify(cartItems))
+                                window.localStorage.setItem('addedToCart', JSON.stringify(addedToCart))
+                            }
                         }
                         clearDesign(data.id);
 
