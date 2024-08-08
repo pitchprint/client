@@ -73,7 +73,7 @@
 
             let elmParent = document.querySelector('[data-hook="product-prices-wrapper"]');
             if (!elmParent) {
-                let cartElem = document.querySelector('[data-hook="add-to-cart"], [aria-label="Add to Cart"]');
+                let cartElem = document.querySelector(`[data-hook="add-to-cart"], [aria-label="Add to Cart"], ${window.PPCLIENT?.customCartButton}`);
                 elmParent = cartElem?.parentNode;
             }
             if (!elmParent) return console.log('Weird, PitchPrint needs the pricing element to hook div to');
@@ -234,12 +234,12 @@
         setCartImages = () => {
             var element = document.querySelectorAll('[data-hook="product-thumbnail-media"]'),
                 cartItems = JSON.parse(window.localStorage.getItem('addedToCart'));
-
             if (element && cartItems) {
                 cartItems.forEach((item, idx) => {
                     if (item.projectId?.length > 0) {
                         var lastProjectId = item.projectId[item.projectId.length - 1];
                         if (element[idx]) {
+                            console.log(element, item)
                             element[idx].src = `${PREVIEWPATH}${lastProjectId}_1.jpg?`;
                             element[idx].srcset = `${PREVIEWPATH}${lastProjectId}_1.jpg?`;
                         }
