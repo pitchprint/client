@@ -73,7 +73,7 @@
 
             let elmParent = document.querySelector('[data-hook="product-prices-wrapper"]');
             if (!elmParent) {
-                let cartElem = document.querySelector('[data-hook="add-to-cart"], [aria-label="Add to Cart"], [aria-label="Ajouter au panier"]');
+                let cartElem = document.querySelector('[data-hook="add-to-cart"], [aria-label="Add to Cart"], [aria-label="Ajouter au panier"], [aria-label="Legg til i handlekurv"]');
                 elmParent = cartElem?.parentNode;
             }
             if (!elmParent) return console.log('Weird, PitchPrint needs the pricing element to hook div to');
