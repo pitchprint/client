@@ -93,6 +93,7 @@
                 createButtons: true,
                 userId,
                 userData,
+                enableUpload: currValues?.upload || false,
                 langCode: (window.wixEmbedsAPI?.getLanguage()) || 'en',
                 designId: currValues?.designId || values?.designId,
                 projectId: currValues?.projectId || '',
