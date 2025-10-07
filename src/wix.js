@@ -30,7 +30,7 @@
         },
 
         decodeValues = param => {
-            const value = typeof param === 'sring' ? parseJson(decodeURIComponent(param)) : param;
+            const value = typeof param === 'string' ? parseJson(decodeURIComponent(param)) : param;
             if (value.projectId) value.preview = `${PREVIEWPATH}${value.projectId}_1.jpg`;
             return value;
         },
@@ -73,7 +73,7 @@
 
             let elmParent = document.querySelector('[data-hook="product-prices-wrapper"]');
             if (!elmParent) {
-                let cartElem = document.querySelector('[data-hook="add-to-cart"], [aria-label="Add to Cart"], [aria-label="Ajouter au panier"], [aria-label="Legg til i handlekurv"], [aria-label="In den Warenkorb"]');
+                let cartElem = document.querySelector('[data-hook="add-to-cart"], [aria-label="Add to Cart"], [aria-label="Ajouter au panier"], [aria-label="Legg til i handlekurv"], [aria-label="In den Warenkorb"], .add-to-cart button');
                 elmParent = cartElem?.parentNode;
             }
             if (!elmParent) return console.log('Weird, PitchPrint needs the pricing element to hook div to');
@@ -93,7 +93,7 @@
                 createButtons: true,
                 userId,
                 userData,
-                enableUpload: currValues?.upload || false,
+                enableUpload: values?.upload || false,
                 langCode: (window.wixEmbedsAPI?.getLanguage()) || 'en',
                 designId: currValues?.designId || values?.designId,
                 projectId: currValues?.projectId || '',
@@ -121,11 +121,16 @@
 
             window.ppclient.on('session-saved', event => {
                 let store = parseJson(window.localStorage.getItem('pprint-wx') || '{}');
-
+                var projectId = event.data.projectId || event.data.values?.projectId || event.data.values?.id || event.data.values?.designId || '';
+                console.log('Session saved', event.data);
                 if (event.data.clear) {
                     if (store) delete store?.[productId];
                 } else {
                     if (store) store[productId] = JSON.parse(decodeURIComponent(event.data.values));
+                    if (projectId.substr(0, 2) === 'U-') {
+                        delete store?.[productId].reviews;
+                        _zipFiles(event.data.values);
+                    }
                 }
 
                 window.localStorage.setItem('pprint-wx-c', JSON.stringify(store));
@@ -233,8 +238,15 @@
         },
 
         setCartImages = () => {
-            var element = document.querySelectorAll('[data-hook="product-thumbnail-media"]'),
+            var element = document.querySelectorAll('[data-hook="product-thumbnail-media"] img, [data-hook="product-thumbnail-media"], [data-hook="product-thumbnail-wrapper"] img'),
                 cartItems = JSON.parse(window.localStorage.getItem('addedToCart'));
+            // remove non image elements from element dont use filter as it will not work
+            for (var i = 0; i < element.length; i++) {
+                if (element[i].tagName !== 'IMG') {
+                    element[i].parentNode.removeChild(element[i]);
+                }
+            }
+            console.log('Filtered elements', element);
             if (element && cartItems) {
                 cartItems.forEach((item, idx) => {
                     if (item.projectId?.length > 0) {
@@ -280,29 +292,37 @@
             })
         },
 
-        initSaveForLater = () => {
-            const wrapper = document.querySelector('._2JOHk,#TPAMultiSection_knia8al9,#TPAMultiSection_kw4yte5f,[id^="TPAMultiSection_"]');
+        _zipFiles = (_val) => {
+            _val = decodeValues(_val);
+            console.log('Zipping files', _val);
+            // USE PITCHPRINT.IO API TO ZIP FILES
+            window.ppclient.comm('https://api.pitchprint.io/client/zip-uploads', { files: _val.files, id: _val.projectId })
+                .catch(console.log);
+        }
 
-            if (wrapper && !document.getElementById('pp_mydesigns_div'))
-                wrapper.insertAdjacentHTML('afterbegin', '<div id="pp_mydesigns_div"></div>');
+    initSaveForLater = () => {
+        const wrapper = document.querySelector('._2JOHk,#TPAMultiSection_knia8al9,#TPAMultiSection_kw4yte5f,[id^="TPAMultiSection_"]');
 
-            if (!wrapper && window.PPCLIENT?.customAccountDivSel && !document.getElementById('pp_mydesigns_div'))
-                document.querySelector(window.PPCLIENT.customAccountDivSel).insertAdjacentHTML('afterbegin', '<div id="pp_mydesigns_div"></div>');
+        if (wrapper && !document.getElementById('pp_mydesigns_div'))
+            wrapper.insertAdjacentHTML('afterbegin', '<div id="pp_mydesigns_div"></div>');
 
-            const run = () => {
-                const table = document.getElementById('pp-recent-table');
-                if (table) {
-                    clearInterval(checkTable); // Clear the interval if the table is present
-                    table.addEventListener('click', evt => {
-                        if (evt.target?.dataset?.fnc === 'clone') {
-                            duplicateProject(evt.target.dataset.idx, evt.target.dataset.resume === 'true');
-                        }
-                    });
-                }
+        if (!wrapper && window.PPCLIENT?.customAccountDivSel && !document.getElementById('pp_mydesigns_div'))
+            document.querySelector(window.PPCLIENT.customAccountDivSel).insertAdjacentHTML('afterbegin', '<div id="pp_mydesigns_div"></div>');
+
+        const run = () => {
+            const table = document.getElementById('pp-recent-table');
+            if (table) {
+                clearInterval(checkTable); // Clear the interval if the table is present
+                table.addEventListener('click', evt => {
+                    if (evt.target?.dataset?.fnc === 'clone') {
+                        duplicateProject(evt.target.dataset.idx, evt.target.dataset.resume === 'true');
+                    }
+                });
             }
-            run();
-            const checkTable = setInterval(run, 1000);
-        },
+        }
+        run();
+        const checkTable = setInterval(run, 1000);
+    },
 
         duplicateProject = (value, resume) => {
 
@@ -431,7 +451,42 @@
             return apiKey;
         }
 
-    window.wixDevelopersAnalytics ? register() : window.addEventListener('wixDevelopersAnalyticsReady', register);
+    //window.wixDevelopersAnalytics ? register() : window.addEventListener('wixDevelopersAnalyticsReady', register);
+
+    safeInitialize = () => {
+        const observer = new MutationObserver((mutations, obs) => {
+            const priceWrapper = document.querySelector('[data-hook="product-prices-wrapper"]') ||
+                document.querySelector('[aria-label="Add to Cart"]') ||
+                document.querySelector('.add-to-cart button');
+
+            if (priceWrapper) {
+                console.log('PitchPrint: React hydration complete, initializing...');
+                obs.disconnect();
+
+                window.wixDevelopersAnalytics ? register() : window.addEventListener('wixDevelopersAnalyticsReady', register);
+            }
+        });
+
+        // Observe DOM changes until we find hydrated target
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+
+        // Fallback timeout: run after 10s even if observer misses
+        setTimeout(() => {
+            observer.disconnect();
+            window.wixDevelopersAnalytics ? register() : window.addEventListener('wixDevelopersAnalyticsReady', register);
+        }, 10000);
+    };
+
+    if (typeof window !== 'undefined') {
+        window.addEventListener('load', () => {
+            requestAnimationFrame(() => {
+                safeInitialize();
+            });
+        });
+    }
 
     window.ppWixSetup = true;
 })(void 0);
