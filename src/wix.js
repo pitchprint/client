@@ -23,15 +23,15 @@
             document.querySelector('head').appendChild(script);
         },
 
-        parseJson = str => {
+        parseJson = (str, fallback = null) => {
             try {
                 return JSON.parse(str);
-            } catch (e) { return 0 }
+            } catch (e) { return fallback }
         },
 
         decodeValues = param => {
-            const value = typeof param === 'string' ? parseJson(decodeURIComponent(param)) : param;
-            if (value.projectId) value.preview = `${PREVIEWPATH}${value.projectId}_1.jpg`;
+            const value = typeof param === 'string' ? parseJson(decodeURIComponent(param), null) : param;
+            if (value?.projectId) value.preview = `${PREVIEWPATH}${value.projectId}_1.jpg`;
             return value;
         },
 
@@ -75,7 +75,7 @@
             }
 
 
-            if (typeof store === 'string') store = parseJson(store);
+            if (typeof store === 'string') store = parseJson(store, {});
             let currValues = store[productId] || {};
             if (typeof currValues === 'string') currValues = decodeValues(currValues);
 
@@ -142,7 +142,7 @@
             });
 
             window.ppclient.on('session-saved', event => {
-                let store = parseJson(window.localStorage.getItem('pprint-wx') || '{}');
+                let store = parseJson(window.localStorage.getItem('pprint-wx') || '{}', {});
                 var projectId = event.data.projectId || event.data.values?.projectId || event.data.values?.id || event.data.values?.designId || '';
                 console.log('Session saved', event.data);
                 if (event.data.clear) {
@@ -150,7 +150,7 @@
                 } else {
                     if (store) store[productId] = JSON.parse(decodeURIComponent(event.data.values));
                     if (projectId.substr(0, 2) === 'U-') {
-                        delete store?.[productId].reviews;
+                        delete store?.[productId]?.previews;
                         _zipFiles(event.data.values);
                     }
                 }
@@ -169,8 +169,8 @@
             var projects = window.localStorage.getItem('pp-projects') || {},
                 store = window.localStorage.getItem('pprint-wx');
 
-            if (typeof store === 'string') store = parseJson(store);
-            if (typeof projects === 'string') projects = parseJson(projects);
+            if (typeof store === 'string') store = parseJson(store, {});
+            if (typeof projects === 'string') projects = parseJson(projects, {});
 
             if (store) {
                 let storeValues = store[productId] || {};
@@ -190,9 +190,9 @@
 
         clearFromCart = (productId) => {
             var projects = window.localStorage.getItem('pp-projects') || {},
-                addedToCart = parseJson(window.localStorage.getItem('addedToCart') || '[]') || [];
+                addedToCart = parseJson(window.localStorage.getItem('addedToCart') || '[]', []);
 
-            if (typeof projects === 'string') projects = parseJson(projects);
+            if (typeof projects === 'string') projects = parseJson(projects, {});
 
             setTimeout(() => {
                 addedToCart = addedToCart.filter(item => item.id !== productId);
@@ -229,7 +229,7 @@
             if (!param?.contents) return;
             let storeData = window.localStorage.getItem('pp-projects') || {}, doSave;
 
-            if (typeof storeData === 'string') storeData = parseJson(storeData);
+            if (typeof storeData === 'string') storeData = parseJson(storeData, {});
 
             param.contents.forEach(item => {
                 if (storeData[item?.id]) {
@@ -347,7 +347,7 @@
             // Wait for DOM to be stable before injecting
             const injectDiv = () => {
                 const wrapper = document.querySelector('._2JOHk,#TPAMultiSection_knia8al9,#TPAMultiSection_kw4yte5f,[id^="TPAMultiSection_"],#comp-lkpu4z2h');
-
+                console.log('Injecting Save for Later div', wrapper);
                 if (wrapper && !document.getElementById('pp_mydesigns_div')) {
                     requestAnimationFrame(() => {
                         wrapper.insertAdjacentHTML('afterbegin', '<div id="pp_mydesigns_div"></div>');
@@ -452,9 +452,9 @@
 
                     case 'AddToCart':
                         if (getApiKey()) {
-                            const cartItems = parseJson(window.localStorage.getItem('cartItems')) || {},
+                            const cartItems = parseJson(window.localStorage.getItem('cartItems'), {}),
                                 existingItemIndex = cartItems[data.id] ? cartItems[data.id].findIndex(item => item.id === data.id) : -1,
-                                addedToCart = parseJson(window.localStorage.getItem('addedToCart')) || [];
+                                addedToCart = parseJson(window.localStorage.getItem('addedToCart'), []);
 
                             if (addedToCart.length === 0 && window.ppclient?.vars?.projectId) {
                                 data['projectId'] = [window.ppclient.vars.projectId]; // Wrap projectId in an array
@@ -505,8 +505,13 @@
         },
 
         getApiKey = () => {
-            var apiKey = document.getElementById('pitchprint-script').src.split('=')[1];
-            return apiKey;
+            const script = document.getElementById('pitchprint-script');
+            const src = script?.getAttribute('src') || '';
+
+            if (!src || !src.includes('=')) return null;
+
+            const apiKey = src.split('=').pop();
+            return apiKey || null;
         }
 
     window.wixDevelopersAnalytics ? register() : window.addEventListener('wixDevelopersAnalyticsReady', register);
