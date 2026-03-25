@@ -36,15 +36,33 @@
         },
 
         start = async param => {
+            param = param || {};
+
+            // Wait for React to fully hydrate before manipulating DOM
+            if (typeof window !== 'undefined' && !window.__reactHydrated) {
+                await new Promise(resolve => {
+                    const checkHydration = setInterval(() => {
+                        if (document.readyState === 'complete') {
+                            clearInterval(checkHydration);
+                            setTimeout(resolve, 100); // Small delay for React hydration
+                        }
+                    }, 50);
+                });
+                window.__reactHydrated = true;
+            }
+
             if (window.location.href.includes('/account/my-orders') || param.pageTypeIdentifier === "member_page")
                 return startClientAccount(param);
-
-            param = param || {};
 
             let productId = param.productId,
                 values = storeProjects[productId],
                 apiKey = document.getElementById('pitchprint-script')?.src?.split('=')[1],
+                store = null;
+
+            // Only access localStorage on client-side
+            if (typeof window !== 'undefined') {
                 store = window.localStorage.getItem('pprint-wx') || {};
+            }
 
 
             if (userData === undefined) {
@@ -80,7 +98,11 @@
 
             const btnSec = document.getElementById('pp_main_btn_sec');
             if (btnSec) btnSec.remove();
-            elmParent.insertAdjacentHTML('beforeend', '<div id="pp_main_btn_sec"><img src="https://pitchprint.io/rsc/images/loaders/spinner_new.svg"style="width:24px"></div>');
+
+            // Use requestAnimationFrame to avoid hydration conflicts
+            requestAnimationFrame(() => {
+                elmParent.insertAdjacentHTML('beforeend', '<div id="pp_main_btn_sec"><img src="https://pitchprint.io/rsc/images/loaders/spinner_new.svg"style="width:24px"></div>');
+            });
 
             if (window.ppclient) {
                 window.ppclient.destroy();
@@ -199,7 +221,7 @@
                 client: 'wx',
                 afterValidation: '_fetchProjects'
             });
-            window.ppclient.on('app-validated', initSaveForLater());
+            window.ppclient.on('app-validated', initSaveForLater);
         },
 
         storeOrders = param => {
@@ -239,13 +261,11 @@
 
         setCartImages = () => {
             var element = document.querySelectorAll('[data-hook="product-thumbnail-media"] img, [data-hook="product-thumbnail-media"], [data-hook="product-thumbnail-wrapper"] img'),
-                cartItems = JSON.parse(window.localStorage.getItem('addedToCart'));
-            // remove non image elements from element dont use filter as it will not work
-            for (var i = 0; i < element.length; i++) {
-                if (element[i].tagName !== 'IMG') {
-                    element[i].parentNode.removeChild(element[i]);
-                }
-            }
+                cartItems = typeof window !== 'undefined' ? JSON.parse(window.localStorage.getItem('addedToCart') || '[]') : [];
+
+            // remove non image elements from element
+            element = Array.from(element).filter(el => el.tagName === 'IMG');
+
             console.log('Filtered elements', element);
             if (element && cartItems) {
                 cartItems.forEach((item, idx) => {
@@ -253,8 +273,10 @@
                         var lastProjectId = item.projectId[item.projectId.length - 1];
                         if (element[idx]) {
                             console.log(element, item)
-                            element[idx].src = `${PREVIEWPATH}${lastProjectId}_1.jpg?`;
-                            element[idx].srcset = `${PREVIEWPATH}${lastProjectId}_1.jpg?`;
+                            setTimeout(() => {
+                                element[idx].src = `${PREVIEWPATH}${lastProjectId}_1.jpg?`;
+                                element[idx].srcset = `${PREVIEWPATH}${lastProjectId}_1.jpg?`;
+                            }, 1000);
                         }
                     }
                 });
@@ -262,34 +284,55 @@
         },
 
         removeLineItem = () => {
+            // Use MutationObserver to wait for React to finish rendering
+            const observer = new MutationObserver(() => {
+                const removeButtons = document.querySelectorAll('[data-hook="CartItemDataHook.remove"]');
+                if (removeButtons.length > 0) {
+                    observer.disconnect();
 
-            const _cartItems = JSON.parse(window.localStorage.getItem('addedToCart'))
-            const removeButtons = document.querySelectorAll('[data-hook="CartItemDataHook.remove"]');
+                    const _cartItems = typeof window !== 'undefined' ? JSON.parse(window.localStorage.getItem('addedToCart') || '[]') : [];
 
-            removeButtons.forEach((button, index) => {
-                button.addEventListener('click', () => {
-                    _cartItems.splice(index, 1);
-                    window.localStorage.setItem("addedToCart", JSON.stringify(_cartItems))
-                    setTimeout(setCartImages(), 500)
-                });
+                    removeButtons.forEach((button, index) => {
+                        // Remove existing listener to avoid duplicates
+                        const newButton = button.cloneNode(true);
+                        button.parentNode.replaceChild(newButton, button);
+
+                        newButton.addEventListener('click', () => {
+                            _cartItems.splice(index, 1);
+                            window.localStorage.setItem("addedToCart", JSON.stringify(_cartItems))
+                            setTimeout(setCartImages, 500)
+                        });
+                    });
+                }
             });
+
+            observer.observe(document.body, { childList: true, subtree: true });
+
+            // Disconnect after 5 seconds to prevent memory leaks
+            setTimeout(() => observer.disconnect(), 5000);
         },
 
         removeProjectLineItem = () => {
-            const _cartItems = JSON.parse(window.localStorage.getItem('addedToCart')),
-                _quantity = document.querySelectorAll('[data-hook="CartItemDataHook.quantity"] input'),
-                _decrement = document.querySelectorAll('[name="decrement"]');
+            requestAnimationFrame(() => {
+                const _cartItems = typeof window !== 'undefined' ? JSON.parse(window.localStorage.getItem('addedToCart') || '[]') : [],
+                    _quantity = document.querySelectorAll('[data-hook="CartItemDataHook.quantity"] input'),
+                    _decrement = document.querySelectorAll('[name="decrement"]');
 
-            _decrement.forEach((button, index) => {
-                button.addEventListener('click', () => {
-                    if (_cartItems[index].projectId && _cartItems[index].projectId.length > 1 && _quantity[index].value > 1) {
-                        _cartItems[index].projectId.splice(-1);
-                        console.log(_cartItems)
-                        window.localStorage.setItem('addedToCart', JSON.stringify(_cartItems));
-                        setTimeout(setCartImages(), 500);
-                    }
+                _decrement.forEach((button, index) => {
+                    // Clone to remove existing listeners
+                    const newButton = button.cloneNode(true);
+                    button.parentNode.replaceChild(newButton, button);
+
+                    newButton.addEventListener('click', () => {
+                        if (_cartItems[index].projectId && _cartItems[index].projectId.length > 1 && _quantity[index].value > 1) {
+                            _cartItems[index].projectId.splice(-1);
+                            console.log(_cartItems)
+                            window.localStorage.setItem('addedToCart', JSON.stringify(_cartItems));
+                            setTimeout(setCartImages, 500);
+                        }
+                    })
                 })
-            })
+            });
         },
 
         _zipFiles = (_val) => {
@@ -298,31 +341,46 @@
             // USE PITCHPRINT.IO API TO ZIP FILES
             window.ppclient.comm('https://api.pitchprint.io/client/zip-uploads', { files: _val.files, id: _val.projectId })
                 .catch(console.log);
-        }
+        },
 
-    initSaveForLater = () => {
-        const wrapper = document.querySelector('._2JOHk,#TPAMultiSection_knia8al9,#TPAMultiSection_kw4yte5f,[id^="TPAMultiSection_"]');
+        initSaveForLater = () => {
+            // Wait for DOM to be stable before injecting
+            const injectDiv = () => {
+                const wrapper = document.querySelector('._2JOHk,#TPAMultiSection_knia8al9,#TPAMultiSection_kw4yte5f,[id^="TPAMultiSection_"]');
 
-        if (wrapper && !document.getElementById('pp_mydesigns_div'))
-            wrapper.insertAdjacentHTML('afterbegin', '<div id="pp_mydesigns_div"></div>');
+                if (wrapper && !document.getElementById('pp_mydesigns_div')) {
+                    requestAnimationFrame(() => {
+                        wrapper.insertAdjacentHTML('afterbegin', '<div id="pp_mydesigns_div"></div>');
+                    });
+                }
 
-        if (!wrapper && window.PPCLIENT?.customAccountDivSel && !document.getElementById('pp_mydesigns_div'))
-            document.querySelector(window.PPCLIENT.customAccountDivSel).insertAdjacentHTML('afterbegin', '<div id="pp_mydesigns_div"></div>');
-
-        const run = () => {
-            const table = document.getElementById('pp-recent-table');
-            if (table) {
-                clearInterval(checkTable); // Clear the interval if the table is present
-                table.addEventListener('click', evt => {
-                    if (evt.target?.dataset?.fnc === 'clone') {
-                        duplicateProject(evt.target.dataset.idx, evt.target.dataset.resume === 'true');
+                if (!wrapper && window.PPCLIENT?.customAccountDivSel && !document.getElementById('pp_mydesigns_div')) {
+                    const customDiv = document.querySelector(window.PPCLIENT.customAccountDivSel);
+                    if (customDiv) {
+                        requestAnimationFrame(() => {
+                            customDiv.insertAdjacentHTML('afterbegin', '<div id="pp_mydesigns_div"></div>');
+                        });
                     }
-                });
+                }
+            };
+
+            // Delay injection to avoid hydration conflicts
+            setTimeout(injectDiv, 300);
+
+            const run = () => {
+                const table = document.getElementById('pp-recent-table');
+                if (table) {
+                    clearInterval(checkTable);
+                    table.addEventListener('click', evt => {
+                        if (evt.target?.dataset?.fnc === 'clone') {
+                            duplicateProject(evt.target.dataset.idx, evt.target.dataset.resume === 'true');
+                        }
+                    });
+                }
             }
-        }
-        run();
-        const checkTable = setInterval(run, 1000);
-    },
+            const checkTable = setInterval(run, 1000);
+            run();
+        },
 
         duplicateProject = (value, resume) => {
 
@@ -433,7 +491,7 @@
                     case 'PageView':
                         if (getApiKey()) {
                             if (data.pageTypeIdentifier === 'shopping_cart' || data.pageTypeIdentifier === 'product_page') {
-                                setCartImages();
+                                setTimeout(setCartImages, 1000);
                                 removeLineItem();
                                 removeProjectLineItem();
                             }
@@ -451,42 +509,7 @@
             return apiKey;
         }
 
-    //window.wixDevelopersAnalytics ? register() : window.addEventListener('wixDevelopersAnalyticsReady', register);
-
-    safeInitialize = () => {
-        const observer = new MutationObserver((mutations, obs) => {
-            const priceWrapper = document.querySelector('[data-hook="product-prices-wrapper"]') ||
-                document.querySelector('[aria-label="Add to Cart"]') ||
-                document.querySelector('.add-to-cart button');
-
-            if (priceWrapper) {
-                console.log('PitchPrint: React hydration complete, initializing...');
-                obs.disconnect();
-
-                window.wixDevelopersAnalytics ? register() : window.addEventListener('wixDevelopersAnalyticsReady', register);
-            }
-        });
-
-        // Observe DOM changes until we find hydrated target
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-
-        // Fallback timeout: run after 10s even if observer misses
-        setTimeout(() => {
-            observer.disconnect();
-            window.wixDevelopersAnalytics ? register() : window.addEventListener('wixDevelopersAnalyticsReady', register);
-        }, 10000);
-    };
-
-    if (typeof window !== 'undefined') {
-        window.addEventListener('load', () => {
-            requestAnimationFrame(() => {
-                safeInitialize();
-            });
-        });
-    }
+    window.wixDevelopersAnalytics ? register() : window.addEventListener('wixDevelopersAnalyticsReady', register);
 
     window.ppWixSetup = true;
 })(void 0);
