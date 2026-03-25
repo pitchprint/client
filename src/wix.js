@@ -346,7 +346,7 @@
         initSaveForLater = () => {
             // Wait for DOM to be stable before injecting
             const injectDiv = () => {
-                const wrapper = document.querySelector('._2JOHk,#TPAMultiSection_knia8al9,#TPAMultiSection_kw4yte5f,[id^="TPAMultiSection_"]');
+                const wrapper = document.querySelector('._2JOHk,#TPAMultiSection_knia8al9,#TPAMultiSection_kw4yte5f,[id^="TPAMultiSection_"],#comp-lkpu4z2h');
 
                 if (wrapper && !document.getElementById('pp_mydesigns_div')) {
                     requestAnimationFrame(() => {
