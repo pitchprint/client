@@ -12,15 +12,55 @@
         PREVIEWPATH = 'https://s3-eu-west-1.amazonaws.com/pitchprint.io/previews/',
         APP_CLIENT_ID = 'b900693a-6304-469d-b100-61db78a331aa',
         storeProjects = {},
+        scriptLoadPromises = {},
+        delegatedCartHandlers = {
+            removeLineItem: false,
+            decrementLineItem: false
+        },
 
         loadScript = (src, onLoadFnc) => {
-            if (document.querySelector(`[src="${src}"]`))
-                return (typeof onLoadFnc === 'function') ? onLoadFnc() : null;
+            const existingScript = document.querySelector(`[src="${src}"]`);
+            let loadPromise = scriptLoadPromises[src];
 
-            let script = document.createElement('script');
-            script.onload = onLoadFnc;
-            script.src = src;
-            document.querySelector('head').appendChild(script);
+            if (existingScript && (existingScript.dataset.ppScriptLoaded === 'true' || existingScript.readyState === 'loaded' || existingScript.readyState === 'complete')) {
+                loadPromise = loadPromise || Promise.resolve();
+            } else if (!loadPromise && existingScript) {
+                loadPromise = new Promise((resolve, reject) => {
+                    existingScript.addEventListener('load', () => {
+                        existingScript.dataset.ppScriptLoaded = 'true';
+                        resolve();
+                    }, { once: true });
+
+                    existingScript.addEventListener('error', () => {
+                        delete scriptLoadPromises[src];
+                        reject(new Error(`Failed to load script: ${src}`));
+                    }, { once: true });
+                });
+            } else if (!loadPromise) {
+                let script = document.createElement('script');
+
+                loadPromise = new Promise((resolve, reject) => {
+                    script.onload = () => {
+                        script.dataset.ppScriptLoaded = 'true';
+                        resolve();
+                    };
+
+                    script.onerror = () => {
+                        delete scriptLoadPromises[src];
+                        reject(new Error(`Failed to load script: ${src}`));
+                    };
+                });
+
+                script.src = src;
+                document.querySelector('head').appendChild(script);
+            }
+
+            scriptLoadPromises[src] = loadPromise;
+            loadPromise.catch(console.log);
+
+            if (typeof onLoadFnc === 'function') loadPromise.then(() => onLoadFnc());
+
+            return loadPromise;
         },
 
         parseJson = (str, fallback = null) => {
@@ -29,9 +69,34 @@
             } catch (e) { return fallback }
         },
 
+        readStorageObject = key => {
+            if (typeof window === 'undefined') return {};
+            return parseJson(window.localStorage.getItem(key), {});
+        },
+
+        readStorageArray = key => {
+            if (typeof window === 'undefined') return [];
+            return parseJson(window.localStorage.getItem(key), []);
+        },
+
+        writeStorage = (key, value) => {
+            if (typeof window === 'undefined') return;
+            window.localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+        },
+
         decodeValues = param => {
-            const value = typeof param === 'string' ? parseJson(decodeURIComponent(param), null) : param;
-            if (value?.projectId) value.preview = `${PREVIEWPATH}${value.projectId}_1.jpg`;
+            let value = param;
+
+            if (typeof param === 'string') {
+                try {
+                    value = parseJson(decodeURIComponent(param), {});
+                } catch (e) {
+                    value = {};
+                }
+            }
+
+            if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+            if (value.projectId) value.preview = `${PREVIEWPATH}${value.projectId}_1.jpg`;
             return value;
         },
 
@@ -57,12 +122,7 @@
             let productId = param.productId,
                 values = storeProjects[productId],
                 apiKey = document.getElementById('pitchprint-script')?.src?.split('=')[1],
-                store = null;
-
-            // Only access localStorage on client-side
-            if (typeof window !== 'undefined') {
-                store = window.localStorage.getItem('pprint-wx') || {};
-            }
+                store = readStorageObject('pprint-wx');
 
 
             if (userData === undefined) {
@@ -73,9 +133,6 @@
                     })
                     .catch(e => console.log(e));
             }
-
-
-            if (typeof store === 'string') store = parseJson(store, {});
             let currValues = store[productId] || {};
             if (typeof currValues === 'string') currValues = decodeValues(currValues);
 
@@ -84,7 +141,15 @@
                     method: 'post',
                     headers: { 'Accept': 'application/json, text/plain, */*', 'Content-Type': 'application/json' },
                     body: JSON.stringify({ apiKey: apiKey, productId: productId })
-                }).then(d => d.json());
+                })
+                    .then(response => {
+                        if (!response.ok) throw new Error(`wix-product-tag request failed: ${response.status}`);
+                        return response.json();
+                    })
+                    .catch(error => {
+                        console.log(error);
+                        return {};
+                    });
             }
             if (values?.designId) storeProjects[productId] = values;
             if (!values?.designId && !currValues.projectId) return;
@@ -102,75 +167,73 @@
             // Use requestAnimationFrame to avoid hydration conflicts
             requestAnimationFrame(() => {
                 elmParent.insertAdjacentHTML('beforeend', '<div id="pp_main_btn_sec"><img src="https://pitchprint.io/rsc/images/loaders/spinner_new.svg"style="width:24px"></div>');
-            });
 
-            if (window.ppclient) {
-                window.ppclient.destroy();
-                window.ppclient = null;
-            }
-
-            window.ppclient = new PPrint({
-                client: 'wx',
-                apiKey: apiKey,
-                createButtons: true,
-                userId,
-                userData,
-                enableUpload: values?.upload || false,
-                langCode: (window.wixEmbedsAPI?.getLanguage()) || 'en',
-                designId: currValues?.designId || values?.designId,
-                projectId: currValues?.projectId || '',
-                previews: currValues?.previews || currValues?.numPages,
-                mode: currValues?.type === 'u' ? 'upload' : (currValues?.projectId ? 'edit' : 'new'),
-                displayMode: values?.displayMode,
-
-                product: values?.product || {
-                    id: param.productId,
-                    title: param.name,
-                    name: param.name,
-                    url: window.location.href
+                if (window.ppclient) {
+                    window.ppclient.destroy();
+                    window.ppclient = null;
                 }
-            });
 
-            window.ppclient.on('set-page-count', event => {
-                if (event?.data?.count && window.PPCLIENT?.quantitySelector) {
-                    const quantity = document.querySelector(window.PPCLIENT.quantitySelector);
-                    if (quantity) {
-                        quantity.value = event.data.count;
-                        quantity.dispatchEvent(new Event('change', { bubbles: true }));
+                window.ppclient = new PPrint({
+                    client: 'wx',
+                    apiKey: apiKey,
+                    createButtons: true,
+                    userId,
+                    userData,
+                    enableUpload: values?.upload || false,
+                    langCode: (window.wixEmbedsAPI?.getLanguage()) || 'en',
+                    designId: currValues?.designId || values?.designId,
+                    projectId: currValues?.projectId || '',
+                    previews: currValues?.previews || currValues?.numPages,
+                    mode: currValues?.type === 'u' ? 'upload' : (currValues?.projectId ? 'edit' : 'new'),
+                    displayMode: values?.displayMode,
+
+                    product: values?.product || {
+                        id: param.productId,
+                        title: param.name,
+                        name: param.name,
+                        url: window.location.href
                     }
-                }
-            });
+                });
 
-            window.ppclient.on('session-saved', event => {
-                let store = parseJson(window.localStorage.getItem('pprint-wx') || '{}', {});
-                var projectId = event.data.projectId || event.data.values?.projectId || event.data.values?.id || event.data.values?.designId || '';
-                console.log('Session saved', event.data);
-                if (event.data.clear) {
-                    if (store) delete store?.[productId];
-                } else {
-                    if (store) store[productId] = JSON.parse(decodeURIComponent(event.data.values));
-                    if (projectId.substr(0, 2) === 'U-') {
-                        delete store?.[productId]?.previews;
-                        _zipFiles(event.data.values);
+                window.ppclient.on('set-page-count', event => {
+                    if (event?.data?.count && window.PPCLIENT?.quantitySelector) {
+                        const quantity = document.querySelector(window.PPCLIENT.quantitySelector);
+                        if (quantity) {
+                            quantity.value = event.data.count;
+                            quantity.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
                     }
-                }
+                });
 
-                window.localStorage.setItem('pprint-wx-c', JSON.stringify(store));
-                window.localStorage.setItem('pprint-wx', JSON.stringify(store));
+                window.ppclient.on('session-saved', event => {
+                    let store = readStorageObject('pprint-wx');
+                    var projectId = event.data.projectId || event.data.values?.projectId || event.data.values?.id || event.data.values?.designId || '';
+                    console.log('Session saved', event.data);
+                    if (event.data.clear) {
+                        if (store) delete store?.[productId];
+                    } else {
+                        const savedValues = parseJson(decodeURIComponent(event.data.values), null);
+                        if (store && savedValues) store[productId] = savedValues;
+                        if (savedValues && projectId.substr(0, 2) === 'U-') {
+                            delete store?.[productId]?.previews;
+                            _zipFiles(event.data.values);
+                        }
+                    }
 
-                if (event.data.clear)
-                    window.location.reload();
+                    writeStorage('pprint-wx-c', store);
+                    writeStorage('pprint-wx', store);
+
+                    if (event.data.clear)
+                        window.location.reload();
+                });
             });
         },
 
         clearDesign = (productId) => {
             if (!window.ppclient) return;
 
-            var projects = window.localStorage.getItem('pp-projects') || {},
-                store = window.localStorage.getItem('pprint-wx');
-
-            if (typeof store === 'string') store = parseJson(store, {});
-            if (typeof projects === 'string') projects = parseJson(projects, {});
+            var projects = readStorageObject('pp-projects'),
+                store = readStorageObject('pprint-wx');
 
             if (store) {
                 let storeValues = store[productId] || {};
@@ -178,27 +241,25 @@
                 if (typeof storeValues === 'string') storeValues = decodeValues(storeValues);
                 values.push(storeValues)
                 projects[productId] = values
-                window.localStorage.setItem('pp-projects', JSON.stringify(projects))
+                writeStorage('pp-projects', projects)
             }
 
             setTimeout(() => {
                 delete store[productId];
-                window.localStorage.setItem('pprint-wx', JSON.stringify(store));
+                writeStorage('pprint-wx', store);
                 window.location.reload();
             }, 500);
         },
 
         clearFromCart = (productId) => {
-            var projects = window.localStorage.getItem('pp-projects') || {},
-                addedToCart = parseJson(window.localStorage.getItem('addedToCart') || '[]', []);
-
-            if (typeof projects === 'string') projects = parseJson(projects, {});
+            var projects = readStorageObject('pp-projects'),
+                addedToCart = readStorageArray('addedToCart');
 
             setTimeout(() => {
                 addedToCart = addedToCart.filter(item => item.id !== productId);
                 delete projects[productId];
-                window.localStorage.setItem('addedToCart', JSON.stringify(addedToCart))
-                window.localStorage.setItem('pp-projects', JSON.stringify(projects));
+                writeStorage('addedToCart', addedToCart)
+                writeStorage('pp-projects', projects);
             }, 500);
         },
 
@@ -227,9 +288,7 @@
         storeOrders = param => {
 
             if (!param?.contents) return;
-            let storeData = window.localStorage.getItem('pp-projects') || {}, doSave;
-
-            if (typeof storeData === 'string') storeData = parseJson(storeData, {});
+            let storeData = readStorageObject('pp-projects'), doSave;
 
             param.contents.forEach(item => {
                 if (storeData[item?.id]) {
@@ -253,7 +312,10 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ token: token, cart: param }),
                 })
-                    .then((response) => response.json())
+                    .then((response) => {
+                        if (!response.ok) throw new Error(`save-order request failed: ${response.status}`);
+                        return response.json();
+                    })
                     .then(() => window.localStorage.removeItem('pp-projects'))
                     .catch(console.error);
             }
@@ -261,7 +323,7 @@
 
         setCartImages = () => {
             var element = document.querySelectorAll('[data-hook="product-thumbnail-media"] img, [data-hook="product-thumbnail-media"], [data-hook="product-thumbnail-wrapper"] img'),
-                cartItems = typeof window !== 'undefined' ? JSON.parse(window.localStorage.getItem('addedToCart') || '[]') : [];
+                cartItems = readStorageArray('addedToCart');
 
             // remove non image elements from element
             element = Array.from(element).filter(el => el.tagName === 'IMG');
@@ -284,59 +346,51 @@
         },
 
         removeLineItem = () => {
-            // Use MutationObserver to wait for React to finish rendering
-            const observer = new MutationObserver(() => {
-                const removeButtons = document.querySelectorAll('[data-hook="CartItemDataHook.remove"]');
-                if (removeButtons.length > 0) {
-                    observer.disconnect();
+            if (delegatedCartHandlers.removeLineItem) return;
+            delegatedCartHandlers.removeLineItem = true;
 
-                    const _cartItems = typeof window !== 'undefined' ? JSON.parse(window.localStorage.getItem('addedToCart') || '[]') : [];
+            document.body.addEventListener('click', event => {
+                const removeButton = event.target.closest('[data-hook="CartItemDataHook.remove"]');
+                if (!removeButton) return;
 
-                    removeButtons.forEach((button, index) => {
-                        // Remove existing listener to avoid duplicates
-                        const newButton = button.cloneNode(true);
-                        button.parentNode.replaceChild(newButton, button);
+                const removeButtons = Array.from(document.querySelectorAll('[data-hook="CartItemDataHook.remove"]'));
+                const index = removeButtons.indexOf(removeButton);
+                if (index < 0) return;
 
-                        newButton.addEventListener('click', () => {
-                            _cartItems.splice(index, 1);
-                            window.localStorage.setItem("addedToCart", JSON.stringify(_cartItems))
-                            setTimeout(setCartImages, 500)
-                        });
-                    });
-                }
+                const cartItems = readStorageArray('addedToCart');
+                cartItems.splice(index, 1);
+                writeStorage('addedToCart', cartItems);
+                setTimeout(setCartImages, 500);
             });
-
-            observer.observe(document.body, { childList: true, subtree: true });
-
-            // Disconnect after 5 seconds to prevent memory leaks
-            setTimeout(() => observer.disconnect(), 5000);
         },
 
         removeProjectLineItem = () => {
-            requestAnimationFrame(() => {
-                const _cartItems = typeof window !== 'undefined' ? JSON.parse(window.localStorage.getItem('addedToCart') || '[]') : [],
-                    _quantity = document.querySelectorAll('[data-hook="CartItemDataHook.quantity"] input'),
-                    _decrement = document.querySelectorAll('[name="decrement"]');
+            if (delegatedCartHandlers.decrementLineItem) return;
+            delegatedCartHandlers.decrementLineItem = true;
 
-                _decrement.forEach((button, index) => {
-                    // Clone to remove existing listeners
-                    const newButton = button.cloneNode(true);
-                    button.parentNode.replaceChild(newButton, button);
+            document.body.addEventListener('click', event => {
+                const decrementButton = event.target.closest('[name="decrement"]');
+                if (!decrementButton) return;
 
-                    newButton.addEventListener('click', () => {
-                        if (_cartItems[index].projectId && _cartItems[index].projectId.length > 1 && _quantity[index].value > 1) {
-                            _cartItems[index].projectId.splice(-1);
-                            console.log(_cartItems)
-                            window.localStorage.setItem('addedToCart', JSON.stringify(_cartItems));
-                            setTimeout(setCartImages, 500);
-                        }
-                    })
-                })
+                const decrementButtons = Array.from(document.querySelectorAll('[name="decrement"]'));
+                const quantities = document.querySelectorAll('[data-hook="CartItemDataHook.quantity"] input');
+                const index = decrementButtons.indexOf(decrementButton);
+                if (index < 0 || !quantities[index]) return;
+
+                const cartItems = readStorageArray('addedToCart');
+                if (cartItems[index]?.projectId && cartItems[index].projectId.length > 1 && quantities[index].value > 1) {
+                    cartItems[index].projectId.splice(-1);
+                    console.log(cartItems)
+                    writeStorage('addedToCart', cartItems);
+                    setTimeout(setCartImages, 500);
+                }
             });
         },
 
         _zipFiles = (_val) => {
             _val = decodeValues(_val);
+            if (!_val?.projectId || !_val?.files) return;
+
             console.log('Zipping files', _val);
             // USE PITCHPRINT.IO API TO ZIP FILES
             window.ppclient.comm('https://api.pitchprint.io/client/zip-uploads', { files: _val.files, id: _val.projectId })
@@ -385,7 +439,7 @@
         duplicateProject = (value, resume) => {
 
             let project = window.ppclient.vars.projects[parseInt(value)],
-                storeData = JSON.parse(window.localStorage.getItem('pprint-wx')) || {},
+                storeData = readStorageObject('pprint-wx'),
                 data = {
                     projectId: project.id,
                     numPages: project.pages || project.pageLength || 1,
@@ -397,40 +451,52 @@
                 };
 
             storeData[project.product.id] = data;
-            window.localStorage.setItem('pprint-wx', JSON.stringify(storeData));
+            writeStorage('pprint-wx', storeData);
         },
 
         comm = (_url, _data, _method, _dType = 'json', _cred = true) => {
             return new Promise((_res, _rej) => {
-                let _cType, _formData = '';
+                const method = (_method || 'GET').toUpperCase();
+                let _cType = null;
+                let _formData = null;
 
-                if (_data && _method === 'GET') {
-                    _formData = [];
+                if (_data && method === 'GET') {
+                    const params = [];
                     for (let _key in _data) {
-                        if (typeof _data[_key] !== 'undefined' && _data[_key] !== null) _formData.push(encodeURIComponent(_key) + '=' + encodeURIComponent(_data[_key]));
+                        if (typeof _data[_key] !== 'undefined' && _data[_key] !== null) {
+                            params.push(encodeURIComponent(_key) + '=' + encodeURIComponent(_data[_key]));
+                        }
                     }
-                    _formData = _formData.join('&').replace(/%20/g, '+');
-                }
-                if (_method === 'POST') {
-                    _cType = 'application/x-www-form-urlencoded';
-                    if (_data) _formData = JSON.stringify(_data);
-                } else if (_method === 'GET') {
-                    _cType = 'text/plain';
-                    if (_formData) _url += `?${_formData}`;
+                    const query = params.join('&').replace(/%20/g, '+');
+                    if (query) _url += `?${query}`;
+                } else if (_data && method !== 'GET') {
+                    _cType = 'application/json';
+                    _formData = JSON.stringify(_data);
                 }
 
                 const _xhr = new XMLHttpRequest();
-                _xhr.open(_method, _url, true);
+                _xhr.open(method, _url, true);
                 _xhr.onload = () => {
-                    if (_xhr.status == 404) {
-                        _rej(_xhr.statusText)
-                    } else {
-                        _res(_dType === 'json' ? JSON.parse(_xhr.responseText) : _xhr.responseText);
+                    if (_xhr.status < 200 || _xhr.status >= 300) {
+                        _rej(_xhr.statusText || `HTTP ${_xhr.status}`);
+                        return;
                     }
+
+                    if (_dType === 'json') {
+                        const response = parseJson(_xhr.responseText, null);
+                        if (response === null) {
+                            _rej('Invalid JSON response');
+                            return;
+                        }
+                        _res(response);
+                        return;
+                    }
+
+                    _res(_xhr.responseText);
                 }
-                _xhr.onerror = () => _rej(_xhr.statusText);
-                _xhr.withCredentials = (_method.toUpperCase() === 'GET' ? _cred : _cred);
-                _xhr.setRequestHeader("Content-Type", _cType);
+                _xhr.onerror = () => _rej(_xhr.statusText || 'Network error');
+                _xhr.withCredentials = _cred;
+                if (_cType) _xhr.setRequestHeader("Content-Type", _cType);
                 _xhr.send(_formData);
             });
         },
@@ -447,14 +513,14 @@
 
                     case 'Purchase':
                         storeOrders(data);
-                        window.localStorage.setItem("addedToCart", '[]')
+                        writeStorage('addedToCart', [])
                         break;
 
                     case 'AddToCart':
                         if (getApiKey()) {
-                            const cartItems = parseJson(window.localStorage.getItem('cartItems'), {}),
+                            const cartItems = readStorageObject('cartItems'),
                                 existingItemIndex = cartItems[data.id] ? cartItems[data.id].findIndex(item => item.id === data.id) : -1,
-                                addedToCart = parseJson(window.localStorage.getItem('addedToCart'), []);
+                                addedToCart = readStorageArray('addedToCart');
 
                             if (addedToCart.length === 0 && window.ppclient?.vars?.projectId) {
                                 data['projectId'] = [window.ppclient.vars.projectId]; // Wrap projectId in an array
@@ -476,8 +542,8 @@
                                     addedToCart.push(data);
                                 }
                             }
-                            window.localStorage.setItem('cartItems', JSON.stringify(cartItems))
-                            window.localStorage.setItem('addedToCart', JSON.stringify(addedToCart))
+                            writeStorage('cartItems', cartItems)
+                            writeStorage('addedToCart', addedToCart)
 
                         }
                         clearDesign(data.id);
